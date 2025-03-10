@@ -1,0 +1,88 @@
+# UNet layer configuration file
+UNet:
+  device: 'cuda' # device to run the model on ('cuda' for gpu, 'cpu' for cpu)
+  num_cls: 3 # number of classes for segmentation (semantic segmentation) -> 3 for pixel reconstruction (in RGB space)
+  output_mode: 'logits' # output mode ('probs': outputs probabilities (after softmax), 'logits': outputs logits) -> directly predict normalized RGB values
+
+  encoder:
+    num_blocks: [3,3,6,3] # number of blocks for each stage
+    input_channels: 3 # number of input channels
+    stem_kernel_size: [4,4] # stem layer kernel size
+    stem_stride: [4,4] # stem layer stride
+    img_hw: [[56, 168], [28, 84], [14, 42], [7, 21]] # image height and width for each stage input -> first stage is right behind the stem layer
+    main_channels: [48, 96, 192, 384] # number of channels for convnext blocks (not expanded channels)
+    expansion_ratio: [4, 4, 4, 4] # expansion ratio for each stage
+    kernel_size: [[7,7], [7,7], [7,7], [7,7]] # kernel size for each stage (not pointwise conv)
+    stride: [[1,1], [1,1], [1,1], [1,1]] # stride for each stage
+    padding: ['same', 'same', 'same', 'same'] # padding for each stage ('same' padding for most cases)
+    dilation: [1, 1, 1, 1] # dilation for each stage (1 for most cases)
+    groups: [1, 1, 1, 1] # number of groups for each stage (1 for most cases)
+    use_se: [True, True, True, True] # whether to use squeeze and excitation block for each stage
+    squeeze_ratio: 16 # squeeze ratio for squeeze and excitation block
+    transition_kernel_size: [-1, [2,2], [2,2], [2,2]] # transition layer kernel size for each stage (-1 for no transition layer -> after first stage, strided convolution is applied!)
+    transition_stride: [-1, [2,2], [2,2], [2,2]] # transition layer stride for each stage (-1 for no transition layer -> after first stage, strided convolution is applied!)
+    norm_mode: 'layer_norm' # normalization mode ('batch_norm' or 'layer_norm')
+    stochastic_dp_p: 0.1 # 0 for no stochastic dropout, 0.1 for 10% stochastic dropout
+    stochastic_mode: 'batch' # mode for stochastic depth dropout ('batch': randomly zeros the entire input, 'row': zeros randomly selected rows from the batch)
+    stochastic_dp_schedule: 'linear' # schedule for stochastic depth dropout ('linear': linearly decrases the drop probability, 'uniform': constant drop probability) 
+
+  decoder:
+    num_blocks: [2,2,2] # number of blocks for each stage
+    img_hw: [[14, 42], [28, 84], [56, 168]] # image height and width for each stage input
+    main_channels: [384, 192, 96] # number of channels for de-convnext blocks (not expanded channels)
+    expansion_ratio: [4, 4, 4] # expansion ratio for each stage
+    kernel_size: [[7,7], [7,7], [7,7]] # kernel size for each stage (not pointwise conv)
+    stride: [[1,1], [1,1], [1,1]] # stride for each stage
+    padding: ['same', 'same', 'same'] # padding for each stage ('same' padding for most cases)
+    dilation: [1, 1, 1] # dilation for each stage (1 for most cases)
+    groups: [1, 1, 1] # number of groups for each stage (1 for most cases)
+    use_se: [True, True, True] # whether to use squeeze and excitation block for each stage
+    squeeze_ratio: 16 # squeeze ratio for squeeze and excitation block
+    encoder_channels: [384, 192, 96, 48] # number of channels for encoder blocks (not expanded channels)
+    transition_kernel_size: [[7,7], [7,7], [7,7]] # transition layer kernel size for each stage
+    transition_stride: [[2,2], [2,2], [2,2]] # transition layer stride for each stage
+    transition_padding: [[3,3], [3,3], [3,3]] # transition layer padding for each stage
+    transition_out_padding: [[1,1], [1,1], [1,1]] # transition layer output padding for each stage
+    norm_mode: 'layer_norm' # normalization mode ('batch_norm' or 'layer_norm')
+    stochastic_dp_p: 0.1 # 0 for no stochastic dropout, 0.1 for 10% stochastic dropout
+    stochastic_mode: 'batch' # mode for stochastic depth dropout ('batch': randomly zeros the entire input, 'row': zeros randomly selected rows from the batch)
+    stochastic_dp_schedule: 'linear' # schedule for stochastic depth dropout ('linear': linearly decrases the drop probability, 'uniform': constant drop probability)
+
+    head: # decoder head configuration
+      head_type: 'head_nx' # head_nx -> N times upsampling layer, 'head_stacked': stacked two upsampling layers, 'head_staged': symmetrical with encoder design
+      head_nx:
+        in_channels: 96 # number of input channels for head
+        out_channels: 96 # number of output channels for head
+        kernel_size: [4, 4] # transposed convolution kernel size
+        stride: [4, 4] # transposed convolution stride
+        padding: [0, 0] # transposed convolution padding
+        output_padding: [0, 0] # transposed convolution output padding
+        groups: 1 # number of groups for transposed convolution (1 for most cases)
+        dilation: 1 # dilation for transposed convolution (1 for most cases)
+      head_stacked:
+        in_channels: [96, 128] # number of input channels for each stacked layer
+        out_channels: [128, 256] # number of output channels for each stacked layer
+        kernel_size: [[4,2], [4,2]] # transposed convolution kernel size for each stacked layer
+        stride: [[2,2], [2,2]] # strides for transposed convolution
+        padding: [[1,0], [1,0]] # padding for transposed convolution
+        output_padding: [[0,0], [0,0]] # output padding for transposed convolution
+        groups: [1, 1] # number of groups for transposed convolution
+        dilation: [1,1] # dilation for transposed convolution
+      head_staged:
+        num_blocks: [2,2] # number of blocks for each stage in head
+        img_hw: [[112, 336], [224, 672]] # image height and width for each stage input in head
+        input_channels: 96 # number of input channels for head (symmetrical design following convnext blocks)
+        main_channels: [48, 48] # number of channels for head blocks (not expanded channels)
+        expansion_ratio: [4,4] # expansion ratio for each stage in head
+        kernel_size: [[7,7], [7,7]] # kernel size for each stage in head (not pointwise conv)
+        stride: [[1,1], [1,1]] # stride for each stage in head
+        padding: ['same', 'same'] # padding for each stage in head ('same' padding for most cases)
+        dilation: [1, 1] # dilation for each stage in head (1 for most cases)
+        groups: [1, 1] # number of groups for each stage in head (1 for most cases)
+        use_se: [True, True] # whether to use squeeze and excitation block for each stage in head
+        squeeze_ratio: 16 # squeeze ratio for squeeze and excitation block for each stage in head
+        transition_kernel_size: [[7,7], [7,7]] # transition layer kernel size for each stage in head
+        transition_stride: [[2,2], [2,2]] # transition layer stride for each stage in head
+        transition_padding: [[3,3], [3,3]] # transition layer padding
+        transition_out_padding: [[1,1], [1,1]] # transition layer output padding
+        norm_mode: 'layer_norm' # normalization mode ('batch_norm' or 'layer_norm')

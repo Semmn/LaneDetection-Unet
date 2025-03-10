@@ -1,0 +1,73 @@
+train:
+  loss: # pytorch cross_entropy or lane_dice or dice
+    loss_type: 'masked_mse'
+    mse:
+      reduction: 'mean' # one of 'none', 'mean', 'sum'
+    masked_mse:
+  optimizer: # for optimizers see https://pytorch.org/docs/stable/optim.html
+    # 'adamw', 'adam', 'rmsprop', 'sgd' is available
+    optimizer_type: 'adamw' # currently supports only type change
+    adamw:
+      lr: 0.0006
+      betas: [0.9, 0.999]
+      eps: 1e-8
+      weight_decay: 0.01
+      amsgrad: False
+      maximize: False
+      foreach: None
+      capturable: False
+      differentialable: False
+      fused: None
+    adam:
+      lr: 0.0006
+      betas: [0.9, 0.999]
+      eps: 1e-8
+      weight_decay: 0.01
+      amsgrad: False
+      foreach: None
+      maximize: False
+      capturaable: False
+      differentialable: False
+      fused: None
+    rmsprop:
+      lr: 0.0006
+      alpha: 0.99
+      eps: 1e-8
+      weight_decay: 0
+      momentum: 0
+      centered: False
+      capturable: False
+      foreach: None
+      maximize: False
+      differentialable: False
+    sgd:
+      lr: 0.0006
+      momentum: 0
+      dampening: 0
+      weight_decay: 0
+      nesterov: False
+      maximize: False
+      foreach: None
+      differentiable: False
+      fused: None
+  
+  scheduler:
+    scheduler_type: 'cosine_warmup_restart' # one of cosine_warmup_restart or one_cycle
+    cosine_warmup_restart:
+      epoch: 60
+      lr_min: 0.00001
+      decay: 0.2
+      cycle_mul: 1.0
+      cycle_limit: 100
+      warmup_lr: 10
+      warmup_lr_init: 0.000001
+      step_size: 30
+    
+    one_cycle:
+      epoch: 60
+      max_lr: 0.0006
+      pct: 0.3
+      anneal_strategy: 'cos'
+      div: 60
+      f_div: 10000
+      three_phase: False
