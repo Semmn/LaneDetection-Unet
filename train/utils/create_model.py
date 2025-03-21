@@ -5,6 +5,8 @@ from model.head.convnext_se_unet import Encoder, DBlock, DStage, DStemNx, DStemS
 from model.utils.conv_2d import adjust_padding_for_strided_output, DepthWiseSepConv
 from model.utils.stochastic_depth_drop import create_linear_p, create_uniform_p
 
+from train.utils.utils import load_yaml
+
 ###################################################################################################
 # class Encoder(torch.nn.Module):
 #     def __init__(self, num_blocks:list, input_channels:int, stem_kersz:tuple, stem_stride:tuple, 
@@ -51,8 +53,7 @@ from model.utils.stochastic_depth_drop import create_linear_p, create_uniform_p
 # config_path: model configuration file path
 def create_unet(config_path):
     
-    with open(config_path) as f:
-        model_configs = yaml.load(f, Loader=yaml.Loader)
+    model_configs = load_yaml(config_path)
     
     device_config = model_configs['UNet']['device'] # 'cuda' or 'cpu'
     num_cls_config = model_configs['UNet']['num_cls']

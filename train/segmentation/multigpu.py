@@ -203,9 +203,9 @@ def main(opts):
             if i % print_threshold == 0:
                 running_loss = recorder.get_scalar('running_loss')
                 running_lane = recorder.get_scalar('running_lane')
-                print(f"training [{epoch+1}:{i:5d}/{total_train_iter}] loss: {running_loss/print_threshold:.5f} lane_score: {running_lane/print_threshold:.5f} lr: {optimizer.param_groups[0]['lr']}")
+                print(f"training [{epoch+1}:{i:5d}/{total_train_iter}] loss: {running_loss/print_threshold:.8f} lane_score: {running_lane/print_threshold:.8f} lr: {optimizer.param_groups[0]['lr']}")
                 if opts.rank==0:
-                    train_logger.info(f"training [{epoch+1}:{i:5d}/{total_train_iter}] loss: {running_loss/print_threshold:.5f} lane_score: {running_lane/print_threshold:.5f} lr: {optimizer.param_groups[0]['lr']}")
+                    train_logger.info(f"training [{epoch+1}:{i:5d}/{total_train_iter}] loss: {running_loss/print_threshold:.8f} lane_score: {running_lane/print_threshold:.8f} lr: {optimizer.param_groups[0]['lr']}")
                 recorder.initialize_scalar(['running_loss', 'running_lane']) # set 'running_loss' and 'running_lane' as 0 value
         
         recorder.collect_statistic(['train_loss', 'train_dice', 'train_lane']) # collect statistic from registry (default to 'average')
@@ -216,11 +216,11 @@ def main(opts):
         lane_coeff = recorder.get_statistic('train_lane')[-1]
         
         print("="*50)
-        print(f"Train Epoch: {epoch+1}, Dice Score: {dice_coeff:.5f}, Lane Score: {lane_coeff:.5f}, Loss: {loss:.5f}, LR: {optimizer.param_groups[0]['lr']}")
+        print(f"Train Epoch: {epoch+1}, Dice Score: {dice_coeff:.8f}, Lane Score: {lane_coeff:.8f}, Loss: {loss:.8f}, LR: {optimizer.param_groups[0]['lr']}")
         print("="*50)
         
         if opts.rank == 0:
-            train_logger.info('=' * 50 + f"\nTrain Epoch: {epoch+1}, Dice Score: {dice_coeff:.3f}, Lane Score: {lane_coeff:.3f}, Loss: {loss:.3f}, LR: {optimizer.param_groups[0]['lr']}\n" + '=' * 50)
+            train_logger.info('=' * 50 + f"\nTrain Epoch: {epoch+1}, Dice Score: {dice_coeff:.8f}, Lane Score: {lane_coeff:.8f}, Loss: {loss:.8f}, LR: {optimizer.param_groups[0]['lr']}\n" + '=' * 50)
         
         if opts.rank==0: # only rank 0 will run validation
             convnext_unet.eval()
@@ -250,8 +250,8 @@ def main(opts):
                     if i % val_print_threshold == 0:
                         running_loss = recorder.get_scalar('running_loss')
                         running_lane = recorder.get_scalar('running_lane')
-                        print(f"Validation [{epoch+1}:{i:5d}/{total_val_iter}] loss: {running_loss/val_print_threshold:.5f} lane_score: {running_lane/val_print_threshold:.5f}")
-                        val_logger.info(f"Validation [{epoch+1}:{i:5d}/{total_val_iter}] loss: {running_loss/val_print_threshold:.5f} lane_score: {running_lane/val_print_threshold:.5f}")
+                        print(f"Validation [{epoch+1}:{i:5d}/{total_val_iter}] loss: {running_loss/val_print_threshold:.8f} lane_score: {running_lane/val_print_threshold:.8f}")
+                        val_logger.info(f"Validation [{epoch+1}:{i:5d}/{total_val_iter}] loss: {running_loss/val_print_threshold:.8f} lane_score: {running_lane/val_print_threshold:.8f}")
                         recorder.initialize_scalar(['running_loss', 'running_lane']) # set 'running_loss' and 'running_lane' as 0 value
         
             recorder.collect_statistic(['val_loss', 'val_dice', 'val_lane']) # collect statistic from registry (default to 'average')
@@ -260,9 +260,9 @@ def main(opts):
             lane_coeff = recorder.get_statistic('val_lane')[-1]
             
             print("="*50)
-            print(f"Val Epoch: {epoch+1}, Dice Score: {dice_coeff:.5f}, Lane Score: {lane_coeff:.5f}, Loss: {loss:.5f}, LR: {optimizer.param_groups[0]['lr']}")
+            print(f"Val Epoch: {epoch+1}, Dice Score: {dice_coeff:.8f}, Lane Score: {lane_coeff:.8f}, Loss: {loss:.8f}, LR: {optimizer.param_groups[0]['lr']}")
             print("="*50)
-            val_logger.info('='*50 + f"\nVal Epoch: {epoch+1}, Dice Score: {dice_coeff:.5f}, Lane Score: {lane_coeff:.5f}, Loss: {loss:.5f}, LR: {optimizer.param_groups[0]['lr']}\n" + '='*50)
+            val_logger.info('='*50 + f"\nVal Epoch: {epoch+1}, Dice Score: {dice_coeff:.8f}, Lane Score: {lane_coeff:.8f}, Loss: {loss:.8f}, LR: {optimizer.param_groups[0]['lr']}\n" + '='*50)
         
         # cosine_warmup_restart uses timm library whoose schedulers are updated to epoch-wise
         if scheduler_type in ['cosine_warmup_restart']:    

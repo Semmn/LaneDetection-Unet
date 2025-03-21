@@ -123,8 +123,7 @@ def set_weights(opts, model, dataloader, logger):
         checkpoints = torch.load(load_path, map_location=torch.device('cuda:{}'.format(opts.gpu)))
         print_with_r0(opts, "\nLoaded checkpoint from epoch %d.\n" % (checkpoints['epoch']+1))
         
-    with open(opts.train_config) as f:
-        train_config = yaml.load(f, Loader=yaml.Loader)
+    train_config = load_yaml(opts.train_config)
         
     scheduler_type = train_config['train']['scheduler']['scheduler_type']
     loss_type = train_config['train']['loss']['loss_type']
