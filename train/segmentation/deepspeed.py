@@ -1,13 +1,13 @@
 # append python search path
 import sys, os
 
-sys.path.append('/work/model/')
-from head.convnext_se_unet import Encoder, DBlock, DStage, DStemNx, DStemStacked, DStemStaged, Decoder, UNet
-from utils.conv_2d import adjust_padding_for_strided_output, DepthWiseSepConv
-from utils.stochastic_depth_drop import create_linear_p, create_uniform_p
-sys.path.append('/work/utils/')
-from loss import DICELoss, LaneDICELoss
-from metrics import get_dice_score, get_iou_score, get_lane_score
+sys.path.append('/work') # append work directory
+from model.head.convnext_se_unet import Encoder, DBlock, DStage, DStemNx, DStemStacked, DStemStaged, Decoder, UNet
+from model.utils.conv_2d import adjust_padding_for_strided_output, DepthWiseSepConv
+from model.utils.stochastic_depth_drop import create_linear_p, create_uniform_p
+
+from train.utils.loss import DICELoss, LaneDICELoss
+from train.utils.metrics import get_dice_score, get_iou_score, get_lane_score
 
 from dataset import CULaneSegDataset
 

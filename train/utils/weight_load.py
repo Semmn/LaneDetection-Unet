@@ -53,6 +53,7 @@ def load_weight(cp_path, model, strict, allow_size_mismatch, logger, opts):
                         checkpoint['model_state_dict'][key] = model_dict[key] # swap the original checkpoint weight parameters as model intialized weight parameters
     model.load_state_dict(checkpoint['model_state_dict'], strict=strict) # error stack trace will follow default pytorch stack trace.
 
+
 # this function load model weight with direct checkpoint that are given as function parameter.
 # use this function when filtering on checkpoint['model_state_dict'] is needed. filtered checkpoint file can be given.
 # ex) saved checkpoints during pytorch multi-distributed training will have 'module.' prefix in each layer name. if you use checkpoint on non-distributed environment, you need to filter this key name
@@ -86,6 +87,38 @@ def load_weight_with_cp(checkpoint, model, strict, allow_size_mismatch, logger):
     model.load_state_dict(checkpoint['model_state_dict'], strict=strict) # error stack trace will follow default pytorch stack trace.
 
 
+# only load the encoder part of the model from checkpoint file.
+def load_encoder_weight_only(checkpoint, model, allow_size_mismatch, logger):
+    model_dict = model.state_dict() # model state dictionary
+    
+    if logger != None:
+        logger.info("Only Encoder Part of the model will be loaded!")
+        for key in list(checkpoint['model_state_dict'].keys()):
+            if 'decoder' or 'cls_head' in key:
+                del(checkpoint['model_state_dict'][key])
+                logger.info(f"deleting decoder state key from model state dictionary: {key}")
+            else:
+                if key in model_dict.keys():
+                    if model_dict[key].size() != checkpoint['model_state_dict'][key].size():
+                        if not allow_size_mismatch:
+                            logger.error(f"Size mismatch: Model has {model_dict[key].size()} and checkpoint has {checkpoint['model_state_dict'][key].size()} for key {key}. error will be occured as allow_size_mismatch={allow_size_mismatch}")
+                        else:
+                            logger.warning(f"Size mismatch: Model has {model_dict[key].size()} and checkpoint has {checkpoint['model_state_dict'][key].size()} for key {key}. this layer will be initialized as model initial weight as allow_size_mismatch={allow_size_mismatch}")
+                            checkpoint['model_state_dict'][key] = model_dict[key] # swap the original checkpoint weight parameters as model intialized weight parameters
+                    else:
+                        logger.info(f'layer {key} is successfully loaded.')
+    else:
+        for key in list(checkpoint['model_state_dict'].keys()):
+            if 'decoder' or 'cls_head' in key: # decoder and cls_head (classifier) will be removed from state dictionary
+                del(checkpoint['model_state_dict'][key])
+            else:
+                if key in model_dict.keys():
+                    if model_dict[key].size() != checkpoint['model_state_dict'][key].size():
+                        if allow_size_mismatch:
+                            checkpoint['model_state_dict'][key] = model_dict[key] # swap the original checkpoint weight parameters as model intialized weight parameters
+
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False) # strict cannot be true as decoder will not be loaded..
+    
 
 # this function sets optimizer, scheduler, model weight with considering options from argument parser
 # if opts.pretraind_weight_path is set, model will be loaded with pretrained weight and optimizer, scheduler will be initialized with default values (start epoch will be 0)
@@ -107,6 +140,7 @@ def set_weights(opts, model, dataloader, logger):
         log_with_r0(opts, logger, "Warnings: if opts.load_weight_path are set, opts.pretrained_weight_path will be ignored!", logging.WARNING)
     
     loading_flag = False
+    # if one of load_weight_path or pretrained_weight_path is not None -> loading_flag=True
     if opts.load_weight_path != 'None' or opts.pretrained_weight_path != 'None':
         loading_flag = True
         
@@ -213,7 +247,7 @@ def set_weights(opts, model, dataloader, logger):
         step_size = scheduler_config['step_size'] # step size of cycle
         scheduler = timm.scheduler.cosine_lr.CosineLRScheduler(optimizer, t_initial=step_size, lr_min=lr_min, cycle_mul=mul,
                                                                cycle_decay=decay, cycle_limit=limit, warmup_t=warmup, warmup_lr_init=warmup_init)
-        end_epoch = scheduler_config['epoch']
+        
     elif scheduler_type == 'one_cycle':
         if loading_flag and opts.load_weight_path != 'None':
             last_epoch = checkpoints['consumed_batch']
@@ -231,9 +265,17 @@ def set_weights(opts, model, dataloader, logger):
         
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, epochs=epochs, steps_per_epoch=steps_per_epoch, pct_start=pct,
                                                         anneal_strategy=anneal_strategy, div_factor=div, final_div_factor=f_div, three_phase=three_phase, last_epoch=last_epoch)
-        end_epoch = scheduler_config['epoch']
+    elif scheduler_type == 'multi_step':
+        if loading_flag and opts.load_weight_path != 'None':
+            last_epoch = checkpoints['epoch'] # unlike one_cycle scheduler, it it based on epoch-level scheduling
+        else:
+            last_epoch = -1 # start from scratch
+        milestones = scheduler_config['milestones'] # period of learning rate decay
+        gamma = scheduler_config['gamma'] # multiplicative factor of learning rate decay
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, step_size=milestones, gamma=gamma)
     else:
-        raise Exception(f"Not Supported Scheduler: {scheduler_type} Currently learning rate scheduler must be one of 'cosine_warmup_restart', 'one_cycle'")
+        raise Exception(f"Not Supported Scheduler: {scheduler_type} Currently learning rate scheduler must be one of 'cosine_warmup_restart', 'one_cycle', 'multi_step")
+    end_epoch = scheduler_config['epoch'] # scheduler container 'epoch'
     
     if loading_flag:
         if opts.rank == 0: # only rank 0 will access to the logger
@@ -245,8 +287,10 @@ def set_weights(opts, model, dataloader, logger):
             load_weight_with_cp(checkpoints, model, strict=True, allow_size_mismatch=False, logger=logger)
             optimizer.load_state_dict(checkpoints['optimizer_state_dict'])
             scheduler.load_state_dict(checkpoints['scheduler_state_dict'])
+            start_epoch = checkpoints['epoch']+1
         elif opts.load_weight_path=='None' and opts.pretrained_weight_path!='None': # load checkpoint from pre-training must allow size mismatch and layer skipping
-            load_weight_with_cp(checkpoints, model, strict=True, allow_size_mismatch=True, logger=logger)
+            # load_weight_with_cp(checkpoints, model, strict=True, allow_size_mismatch=True, logger=logger)
+            load_encoder_weight_only(checkpoints, model, allow_size_mismatch=True, logger=logger)
             start_epoch=0 # pretraiend with loading will be start from 0 epoch
     else:
         start_epoch=0

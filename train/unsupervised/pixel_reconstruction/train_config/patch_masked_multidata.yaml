@@ -51,6 +51,7 @@ train:
       differentiable: False
       fused: None
   
+  # each scheduler must contain epoch value!
   scheduler:
     scheduler_type: 'cosine_warmup_restart' # one of cosine_warmup_restart or one_cycle
     cosine_warmup_restart:
@@ -71,3 +72,8 @@ train:
       div: 60
       f_div: 10000
       three_phase: False
+
+    multi_step:
+      epoch: 60
+      milestones: [20, 40, 50]
+      gamma: 0.5

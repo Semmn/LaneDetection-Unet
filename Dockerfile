@@ -23,7 +23,7 @@ RUN pip3 install pyyaml
 RUN pip3 install timm
 RUN pip3 install regex
 RUN pip3 install opencv-python
-RUN pip3 install deepspeed # to accelerate training and save gpu memory cost
+RUN pip3 install deepspeed
 RUN pip3 install tensorboard
 
 # RUN apt install ffmpeg libsm6 libxext6 -y

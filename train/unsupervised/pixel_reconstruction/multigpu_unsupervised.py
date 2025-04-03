@@ -94,11 +94,14 @@ def main(opts):
                           ('/work/model/head/convnext_se_unet.py', f'{opts.save_path}/convnext_se_unet.py'),
                           ('/work/train/unsupervised/pixel_reconstruction/multigpu_unsupervised.py', f'{opts.save_path}/multigpu_unsupervised.py'),
                           (opts.model_config, f'{opts.save_path}/model_config.yaml'),
-                          (opts.lr_policy_config, f'{opts.save_path}/lr_policy.yaml'),
+                          (opts.train_config, f'{opts.save_path}/train_config.yaml'),
                           ('/work/scripts/convnext_unet_unsupervised.sh', f'{opts.save_path}/convnext_unet_unsupervised.sh')]    
         
         copy_files(copy_file_list)
         train_logger, val_logger, process_logger = set_logger_for_training(opts)
+    else:
+        process_logger = None # if rank is not 0, set process_logger as None
+    
         
     convnext_unet = create_unet(opts.model_config)
     convnext_unet = convnext_unet.to(local_gpu_id)
