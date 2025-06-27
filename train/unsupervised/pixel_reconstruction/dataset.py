@@ -84,34 +84,37 @@ class LaneMaskedCULaneDataset(torch.utils.data.Dataset):
         return len(self.img_list)
     
     def _mask_lanes(self, transformed_images, masks):
-        H, W, C = transformed_images.shape # H, W, C
         transformed_images[masks!=0, :] = 0 # masking lane markings
-        
         return transformed_images
     
     # masking_width are not applied constant qantity, rather it applies as stochastic range.
     def _mask_lanes_w(self, image, masks):
         H, W, C = image.shape
-        random_noise = np.arange(self.masking_width) 
-        skip_flag = False # flag for skip intialized as False
         
-        for i in range(H):
-            for j in range(W):
-                if skip_flag:
-                    if masks[i, j]==0: # until background pixels re-appears
-                        p_range = j + np.random.choice(random_noise)
-                        if p_range < W: # must not exceed image boundary
-                            masks[i, j:p_range] = -1 # -1 indicates it is masked and should not be considered as lanes
-                        skip_flag=False # update skip_flag to False
-                    else:    
-                        continue
+        lane_mask = masks > 0
+        width_mask = np.random.randint(0, 2, size=(H, self.masking_width)) # mask for width masking
+        
+        
+        # # skip_flag = False # flag for skip intialized as False
+        # ### need to vectorize this part
+        # for i in range(H):
+        #     for j in range(W):
+        #         if skip_flag:
+        #             if masks[i, j]==0: # until background pixels re-appears
+        #                 p_range = j + np.random.choice(random_noise)
+        #                 if p_range < W: # must not exceed image boundary
+        #                     masks[i, j:p_range] = -1 # -1 indicates it is masked and should not be considered as lanes
+        #                 skip_flag=False # update skip_flag to False
+        #             else:    
+        #                 continue
                     
-                # when search finds non-background (lane pixels) it removes the horizontally left-part of the image with random range
-                if masks[i, j] != 0 and masks[i,j]!=-1: # -1 cannot be interpreted as lanes
-                    m_range = j - np.random.choice(random_noise)
-                    if m_range >=0: # must not exceed image boundary
-                        masks[i, m_range:j] = masks[i, j]
-                        skip_flag = True # skip_flag on, skipping until background pixels appears in horizontal direction.
+        #         # when search finds non-background (lane pixels) it removes the horizontally left-part of the image with random range
+        #         if masks[i, j] != 0 and masks[i,j]!=-1: # -1 cannot be interpreted as lanes
+        #             m_range = j - np.random.choice(random_noise)
+        #             if m_range >=0: # must not exceed image boundary
+        #                 masks[i, m_range:j] = masks[i, j]
+        #                 skip_flag = True # skip_flag on, skipping until background pixels appears in horizontal direction.
+        # ###
                         
         masking = masks!=0
         image[masking, :] = 0
@@ -120,7 +123,6 @@ class LaneMaskedCULaneDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         image = Image.open(self.img_list[idx])
         lane_mask = Image.open(self.mask_list[idx])
-        
         image = image.convert('RGB')
         
         image = np.array(image)

@@ -127,8 +127,8 @@ def main(opts):
 
     # CULaneSegDataset is the dataset that returns (image, mask) pair for training and validation
     # mask of the returned dataset excludes background channel and only contains foreground lane information
-    train_dataset = CULaneSegDataset(train_x, train_y, transforms = train_transforms, num_classes=5, is_test=False)
-    val_dataset = CULaneSegDataset(val_x, val_y, transforms=val_transforms, num_classes=5, is_test=False)
+    train_dataset = CULaneSegDataset(train_x, train_y, transforms = train_transforms, num_classes=2, is_test=False)
+    val_dataset = CULaneSegDataset(val_x, val_y, transforms=val_transforms, num_classes=2, is_test=False)
     # test_dataset = CULaneSegDataset(test_x, None, transforms=val_transforms, num_classes=5, is_test=True)
     
     train_sampler = DistributedSampler(dataset=train_dataset, shuffle=True)
@@ -185,13 +185,12 @@ def main(opts):
 
         for i, batch in enumerate(train_dataloader, 1): # batch, i follows 1-index ordering
             image, mask = batch
-            image = image.to(local_gpu_id)
-            mask = mask.to(local_gpu_id)
-            
             optimizer.zero_grad()
             
             # mixed precision training
             with autocast(device_type='cuda', dtype=torch.float16):
+                image = image.to(local_gpu_id)
+                mask = mask.to(local_gpu_id)
                 prediction_mask = convnext_unet(image)        
                 loss = criterion(prediction_mask, mask)
             
@@ -279,8 +278,9 @@ def main(opts):
         
         # cosine_warmup_restart uses timm library whoose schedulers are updated to epoch-wise
         if scheduler_type in ['cosine_warmup_restart']:    
-            # update scheduler
-            scheduler.step(epoch)
+            scheduler.step(epoch) # update scheduler with epoch
+        elif scheduler_type in ['multi_step']:
+            scheduler.step()
         
         if opts.rank == 0: # only rank 0 will save the model and plots
             checkdir(opts.save_path+'/weights')

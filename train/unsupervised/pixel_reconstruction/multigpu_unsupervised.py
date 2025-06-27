@@ -177,15 +177,13 @@ def main(opts):
         
         for i, batch in enumerate(train_dataloader, 1): # batch, i follows 1-index ordering
             image, mask = batch, batch.clone()
-            image = image.to(local_gpu_id)
-            mask = mask.to(local_gpu_id)
-            
-            mask_location = (image==0).all(dim=1) # (B, C, H, W) -> channel-wisely when all pixel-values are zero, the pixel is masked.
-            
             optimizer.zero_grad()
             
             # mixed precision training
             with autocast(device_type='cuda', dtype=torch.float16):
+                image = image.to(local_gpu_id)
+                mask = mask.to(local_gpu_id) 
+                mask_location = (image==0).all(dim=1) # (B, C, H, W) -> channel-wisely when all pixel-values are zero, the pixel is masked.
                 prediction_mask = convnext_unet(image)
                 if opts.loss_type == 'mse':
                     loss = criterion(prediction_mask, mask) # when use torch.nn.mse_loss()
@@ -285,8 +283,9 @@ def main(opts):
         
         # cosine_warmup_restart uses timm library whoose schedulers are updated by epoch-wise
         if scheduler_type in ['cosine_warmup_restart']:    
-            # update scheduler
             scheduler.step(epoch)
+        elif scheduler_type in ['multi_step']:
+            scheduler.step()
         
         if opts.rank == 0: # only rank 0 will save the model and plots
             checkdir(opts.save_path+'/weights')

@@ -4,7 +4,7 @@ val_batch_size=64
 model_config='/work/train/segmentation/model_config/unet.yaml'
 train_config='/work/train/segmentation/train_config/segmentation_culane.yaml'
 
-project_name='convnext_unet_4x/culane/pretrained'
+project_name='convnext_unet_4x/culane/supervised'
 weight_dir='/work/checkpoints'
 plot_dir='/work/plots'
 save_step=5

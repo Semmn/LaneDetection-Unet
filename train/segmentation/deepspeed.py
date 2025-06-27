@@ -187,7 +187,7 @@ def main(opts):
     ############################################################
     # if num_cls==2 -> binary segmentation. to classify lane position on the road separately, 
     # we need to at least make 5 masks for 4 lanes each presenting the lane position of the road. (0: background, 1: lane1, 2: lane2, 3: lane3, 4: lane4)
-    convnext_unet = UNet(encoder=unet_encoder, decoder=unet_decoder, num_cls=5, output_mode='probs')
+    convnext_unet = UNet(encoder=unet_encoder, decoder=unet_decoder, num_cls=2, output_mode='probs')
 
         
     train_transforms = A.Compose([
@@ -206,9 +206,9 @@ def main(opts):
         ToTensorV2(p=1.0)
     ])
 
-    train_dataset = CULaneSegDataset(train_x, train_y, transforms = train_transforms, num_classes=5, is_test=False)
-    val_dataset = CULaneSegDataset(val_x, val_y, transforms=val_transforms, num_classes=5, is_test=False)
-    # test_dataset = CULaneSegDataset(test_x, None, transforms=val_transforms, num_classes=5, is_test=True)
+    train_dataset = CULaneSegDataset(train_x, train_y, transforms = train_transforms, num_classes=2, is_test=False)
+    val_dataset = CULaneSegDataset(val_x, val_y, transforms=val_transforms, num_classes=2, is_test=False)
+    # test_dataset = CULaneSegDataset(test_x, None, transforms=val_transforms, num_classes=2, is_test=True)
 
     val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=opts.val_batch_size, shuffle=True)
     # test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=opts.val_batch_size, shuffle=True)

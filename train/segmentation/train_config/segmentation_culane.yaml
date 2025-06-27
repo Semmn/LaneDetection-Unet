@@ -1,6 +1,6 @@
 train:
   loss: # pytorch cross_entropy or lane_dice or dice
-    loss_type: 'lane_dice'
+    loss_type: 'dice'
     lane_dice:
       num_cls: 2 # lane in culane takes 2 classes
     cross_entropy:
@@ -81,6 +81,6 @@ train:
       three_phase: False
     
     multi_step:
-      epoch: 60
+      epoch: 50
       milestones: [20, 40, 50]
       gamma: 0.5
