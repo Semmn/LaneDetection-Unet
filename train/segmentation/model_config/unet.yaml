@@ -1,7 +1,7 @@
 # UNet layer configuration file
 UNet:
   device: 'cuda' # device to run the model on ('cuda' for gpu, 'cpu' for cpu)
-  num_cls: 5 # number of classes for segmentation (semantic segmentation)
+  num_cls: 2 # number of classes for segmentation (semantic segmentation)
   output_mode: 'probs' # output mode ('probs': outputs probabilities (after softmax), 'logits': outputs logits)
 
   encoder:

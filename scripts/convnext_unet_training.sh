@@ -10,7 +10,7 @@ plot_dir='/work/plots'
 save_step=5
 save_plot_step=5
 load_weight_path='None'
-pretrained_weight_path='/work/checkpoints/convnext_unet_4x/multi_data/self_supervised/2025_02_17_150135/weights/2025_02_22_202021_epoch40.pth'
+pretrained_weight_path='None'
 
 rank=0
 local_rank=0

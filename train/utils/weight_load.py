@@ -272,7 +272,7 @@ def set_weights(opts, model, dataloader, logger):
             last_epoch = -1 # start from scratch
         milestones = scheduler_config['milestones'] # period of learning rate decay
         gamma = scheduler_config['gamma'] # multiplicative factor of learning rate decay
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, step_size=milestones, gamma=gamma)
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
     else:
         raise Exception(f"Not Supported Scheduler: {scheduler_type} Currently learning rate scheduler must be one of 'cosine_warmup_restart', 'one_cycle', 'multi_step")
     end_epoch = scheduler_config['epoch'] # scheduler container 'epoch'

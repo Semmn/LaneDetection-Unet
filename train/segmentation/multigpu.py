@@ -2,8 +2,9 @@ import sys
 sys.path.append('/work')
 
 from train.segmentation.dataset import CULaneSegDataset
-
 from train.utils.loss import DICELoss, LaneDICELoss
+from train.utils.recorder import Recorder
+
 from train.utils.metrics import get_dice_score, get_iou_score, get_lane_score
 from train.utils.weight_load import load_weight, load_weight_with_cp, set_weights
 from train.utils.logger import set_logger_for_training, checkdir
@@ -12,7 +13,6 @@ from train.utils.plotting import plot_figure
 from train.utils.dataset import read_culane_segdata
 from train.utils.create_model import create_unet
 from train.utils.utils import copy_files
-from train.utils.recorder import Recorder
 
 import numpy as np
 import argparse
@@ -41,6 +41,10 @@ import timm.scheduler
 from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+# for pytorch mixed precision training
+from torch import autocast
+from torch.amp import GradScaler
 
 
 def get_args_parser():
@@ -144,6 +148,7 @@ def main(opts):
                                                  num_workers=int(opts.num_workers/opts.world_size),
                                                  sampler=val_sampler,
                                                  pin_memory=False)
+    
     # test_dataloader = torch.utils.data.DataLoader(test_dataset,
     #                                               batch_size=opts.val_batch_size,
     #                                               shuffle=False,
@@ -151,8 +156,10 @@ def main(opts):
     #                                               sampler=test_sampler,
     #                                               pin_memory=True)
     
-
     convnext_unet, criterion, optimizer, scheduler, start_epoch, end_epoch, scheduler_type = set_weights(opts, convnext_unet, train_dataloader, process_logger)
+    
+    # creates a GradScaler for mixed precision training
+    scaler = GradScaler()
             
     recorder = Recorder()
     recorder.register(['train_loss', 'train_dice', 'train_lane', 'val_loss', 'val_dice', 'val_lane']) # register each metric name for recording
@@ -183,11 +190,15 @@ def main(opts):
             
             optimizer.zero_grad()
             
-            prediction_mask = convnext_unet(image)
+            # mixed precision training
+            with autocast(device_type='cuda', dtype=torch.float16):
+                prediction_mask = convnext_unet(image)        
+                loss = criterion(prediction_mask, mask)
             
-            loss = criterion(prediction_mask, mask)
-            loss.backward()
-            optimizer.step()
+            # scale loss.  calls backward() on the scaled loss to create scaled gradients
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update() # update the scaler
             
             dice_score = get_dice_score(prediction_mask.cpu().detach().numpy(), mask.cpu().detach().numpy())
             lane_score = get_lane_score(prediction_mask.cpu().detach().numpy(), mask.cpu().detach().numpy())

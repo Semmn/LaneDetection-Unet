@@ -2,7 +2,7 @@ train:
   loss: # pytorch cross_entropy or lane_dice or dice
     loss_type: 'lane_dice'
     lane_dice:
-      num_cls: 5 # lane in culane takes 5 classes
+      num_cls: 2 # lane in culane takes 2 classes
     cross_entropy:
       weights: None # rescaling weight to given each class
       ignore_index: -100 # target value to ignore (setting this does not contribute to gradient to specific class)
@@ -10,12 +10,12 @@ train:
       label_smoothing: 0.0 # a float value in [0.0, 1.0]. specifies the amount of smoothing
     dice:
       weights: None
-      num_cls: 5
+      num_cls: 2
   optimizer: # for optimizers see https://pytorch.org/docs/stable/optim.html
     # 'adamw', 'adam', 'rmsprop', 'sgd' is available
     optimizer_type: 'adamw' # currently supports only type change
     adamw:
-      lr: 0.0006
+      lr: 0.0004
       betas: [0.9, 0.999]
       eps: 1e-8
       weight_decay: 0.01
@@ -26,7 +26,7 @@ train:
       differentiable: False
       fused: None
     adam:
-      lr: 0.0006
+      lr: 0.0004
       betas: [0.9, 0.999]
       eps: 1e-8
       weight_decay: 0.01
@@ -37,7 +37,7 @@ train:
       differentiable: False
       fused: None
     rmsprop:
-      lr: 0.0006
+      lr: 0.0004
       alpha: 0.99
       eps: 1e-8
       weight_decay: 0
@@ -48,7 +48,7 @@ train:
       maximize: False
       differentialable: False
     sgd:
-      lr: 0.0006
+      lr: 0.0004
       momentum: 0
       dampening: 0
       weight_decay: 0
@@ -62,18 +62,18 @@ train:
   scheduler:
     scheduler_type: 'cosine_warmup_restart' # one of cosine_warmup_restart or one_cycle
     cosine_warmup_restart:
-      epoch: 60
+      epoch: 50
       lr_min: 0.00001
-      decay: 0.2
+      decay: 0.5
       cycle_mul: 1.0
-      cycle_limit: 100
-      warmup_lr: 10
+      cycle_limit: 4
+      warmup_lr: 5
       warmup_lr_init: 0.000001
-      step_size: 30
+      step_size: 10
     
     one_cycle:
-      epoch: 60
-      max_lr: 0.0006
+      epoch: 50
+      max_lr: 0.0005
       pct: 0.3
       anneal_strategy: 'cos'
       div: 60

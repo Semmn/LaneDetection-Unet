@@ -6,67 +6,6 @@ import torch
 import torch.nn as nn
 
 
-# Convnext_se for detector backbone (lane point regression + bg/fg classification for detection task)
-class DetectorBackbone(torch.nn.Module):
-    def __init__(self, num_blocks:list, input_channels:int, stem_kersz:tuple, stem_stride:tuple, 
-                 img_hw:list, main_channels:list, expansion_dim:list, kernel_sz:list, stride:list, padding:list, dilation:list, groups:list, droprate:list, drop_mode:list, use_se:list, squeeze_ratio:int,
-                 transition_kersz:list, transition_stride:list, norm_mode:str, device='cuda'):
-        
-        super().__init__()
-        
-        self.num_blocks = num_blocks # number of blocks for each stage
-        self.input_channels = input_channels # mostly RGB 3 channel images
-        self.stem_kersz = stem_kersz # kernel size for stem layer
-        self.stem_stride = stem_stride # stride for stem layer
-        self.img_hw = img_hw # representative image height and width for each stage
-        self.main_channels = main_channels # main channels for each stage
-        self.expansion_dim = expansion_dim # expansion dimension for each stage
-        self.kernel_sz = kernel_sz # kernel size for each stage
-        self.stride=stride # stride for each stage
-        self.padding=padding # padding for each stage
-        self.dilation=dilation # dilation for each stage
-        self.groups=groups # number of groups for each stage
-        self.droprate=droprate # constant droprate for all stage
-        self.drop_mode=drop_mode # drop_mode is same for all stage
-        self.use_se=use_se # flag for using se operation in each stage
-        self.squeeze_ratio=squeeze_ratio # squeeze_ratio is same for all stage
-        self.transition_kersz=transition_kersz # transition kernel size for each stage
-        self.transition_stride=transition_stride # transition stride for each stage
-        
-        if norm_mode not in ['layer_norm', 'batch_norm']:
-            raise Exception(f"Unsupported normalization method: {norm_mode}. Must be either 'layer_norm' or 'batch_norm'")
-        self.norm_mode = norm_mode
-        
-        self.device=device
-        self.num_stages = len(num_blocks)
-        
-        self.stem = Stem(stem_in_channels=self.input_channels, stem_out_channels=main_channels[0], stem_kernel_sz=self.stem_kersz, stem_stride=self.stem_stride,
-                         stem_padding=adjust_padding_for_strided_output(self.stem_kersz, self.stem_stride), stem_dilation=1, stem_groups=1, device=self.device)
-        self.stages = []
-        for i in range(self.num_stages):
-            if i == 0:
-                self.stages.append(Stage(transition_flag=False, num_blocks=self.num_blocks[i], img_hw=self.img_hw[i], in_channels=self.main_channels[i], out_channels=self.expansion_dim[i],
-                                    kernel_sz=self.kernel_sz[i], stride=self.stride[i], padding=self.padding[i], dilation=self.dilation[i], groups=self.groups[i], droprate=self.droprate[i],
-                                    drop_mode=self.drop_mode[i], use_se=self.use_se[i], squeeze_ratio=self.squeeze_ratio, norm_mode=self.norm_mode, device='cuda'))
-            else:
-                self.stages.append(Stage(transition_flag=True, num_blocks=self.num_blocks[i], img_hw=self.img_hw[i], in_channels=self.main_channels[i], out_channels=self.expansion_dim[i],
-                                        kernel_sz=self.kernel_sz[i], stride=self.stride[i], padding=self.padding[i], dilation=self.dilation[i], groups=self.groups[i], droprate=self.droprate[i],
-                                        drop_mode=self.drop_mode[i], use_se=self.use_se[i], squeeze_ratio=self.squeeze_ratio, transition_channels=self.main_channels[i-1], transition_kersz=self.transition_kersz[i],
-                                        transition_stride=self.transition_stride[i], norm_mode=self.norm_mode, device='cuda'))
-        self.stages = torch.nn.ModuleList(self.stages)
-    
-    # as same as u-net encoder design, each stage outputs final block output in each stage
-    def forward(self, x):
-        stage_output = []
-        x = self.stem(x)
-        for i in range(self.num_stages):
-            x = self.stages[i](x)
-            stage_output.append(x)
-        return stage_output
-
-
-
-
 # FPN: Feature Pyramid Network (hierarchical structure of each feature output from each backbone stage)
 # Input: Output from DetectorBackbone forward()
 # Output: Feature Structure constructed from Input. Information from all stage output are reinforced by top<->down feature sharing

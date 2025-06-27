@@ -41,6 +41,10 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
+# for pytorch automatic mixed precision training
+from torch import autocast
+from torch.amp import GradScaler
+
 # set argument parser
 def get_args_parser():
     parser = argparse.ArgumentParser(add_help=False)
@@ -136,7 +140,10 @@ def main(opts):
                                                 pin_memory=False)
     
     convnext_unet, criterion, optimizer, scheduler, start_epoch, end_epoch, scheduler_type = set_weights(opts, convnext_unet, train_dataloader, process_logger)
-        
+    
+    # creates a GradScaler for mixed precision training
+    scaler = GradScaler()
+    
     recorder = Recorder()
     recorder.register(['train_loss', 'train_pixel_reconst', 'val_loss', 'val_pixel_reconst']) # register each metric name for recording
     recorder.register_scalar(['running_loss', 'running_pixel_reconst']) # register temporal scalar value for recording
@@ -179,16 +186,20 @@ def main(opts):
             mask_location = (image==0).all(dim=1) # (B, C, H, W) -> channel-wisely when all pixel-values are zero, the pixel is masked.
             
             optimizer.zero_grad()
+
+            # mixed precision training
+            with autocast(device_type='cuda', dtype=torch.float16):
+                prediction_mask = convnext_unet(image)
             
-            prediction_mask = convnext_unet(image)
+                if opts.loss_type == 'mse':
+                    loss = criterion(prediction_mask, mask) # when use torch.nn.mse_loss()
+                elif opts.loss_type =='masked_mse':
+                    loss = criterion(prediction_mask, mask, mask_location) # when use PixelReconstructLoss()
             
-            if opts.loss_type == 'mse':
-                loss = criterion(prediction_mask, mask) # when use torch.nn.mse_loss()
-            elif opts.loss_type =='masked_mse':
-                loss = criterion(prediction_mask, mask, mask_location) # when use PixelReconstructLoss()
-            
-            loss.backward()
-            optimizer.step()
+            # scale loss. calls backward() on the scaled loss to create scaled gradients
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update() # update the scaler
             
             if opts.loss_type == 'mse':
                 pixel_reconst = get_masked_pixel_reconst(prediction_mask, mask, mask_location)

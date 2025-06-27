@@ -9,7 +9,7 @@ import torch
 # num_classes should include background class. you can decide whether to exclude background class in label mask or not
 # remember that mask_onehot and image shape must be same. if you exclude background class in mask, your model should output num_classes-1 channels
 class CULaneSegDataset(torch.utils.data.Dataset):
-    def __init__(self, segmentation_img_list, segmentation_mask_list, transforms=None, num_classes=5, is_test=False):
+    def __init__(self, segmentation_img_list, segmentation_mask_list, transforms=None, num_classes=2, is_test=False):
         self.segmentation_img_list = segmentation_img_list
         self.segmentation_mask_list = segmentation_mask_list
         self.transforms = transforms # transforms that are only related to source image
@@ -46,6 +46,10 @@ class CULaneSegDataset(torch.utils.data.Dataset):
                 transformed = self.transforms(image=image, mask=mask)
                 image = transformed['image']
                 mask = transformed['mask']
+            
+            if self.num_classes == 2:
+                mask = torch.where(mask > 0, 1, 0) # convert mask to binary (0 or 1)
+                
             mask_onehot = torch.nn.functional.one_hot(mask.long(), num_classes=self.num_classes)
             mask_onehot = mask_onehot.permute(2,0,1) # (H,W,C) -> (C, H, W)
             return image, mask_onehot

@@ -1,3 +1,5 @@
+import sys
+sys.path.append('/work/')
 from model.backbone.convnext_se.convnext_se import ConvNextV1, Stage, Stem
 from model.utils.conv_2d import adjust_padding_for_strided_output, DepthWiseSepConv
 from model.utils.stochastic_depth_drop import create_linear_p, create_uniform_p

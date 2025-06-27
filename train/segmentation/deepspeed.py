@@ -1,13 +1,14 @@
-# append python search path
 import sys, os
 
-sys.path.append('/work') # append work directory
+sys.path.append('/work') 
+
 from model.head.convnext_se_unet import Encoder, DBlock, DStage, DStemNx, DStemStacked, DStemStaged, Decoder, UNet
 from model.utils.conv_2d import adjust_padding_for_strided_output, DepthWiseSepConv
 from model.utils.stochastic_depth_drop import create_linear_p, create_uniform_p
 
 from train.utils.loss import DICELoss, LaneDICELoss
 from train.utils.metrics import get_dice_score, get_iou_score, get_lane_score
+from train.utils.logger import checkdir
 
 from dataset import CULaneSegDataset
 
@@ -31,44 +32,28 @@ from albumentations.pytorch import ToTensorV2
 # for ConsineSchedulerLR
 import timm.scheduler
 
-# for pytorch distributed training
-from torch.utils.data.distributed import DistributedSampler
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
-
 # for using deepspeed library
 import deepspeed
 from deepspeed.accelerator import get_accelerator
 
-
 def add_argument():
-    parser = argparse.ArgumentParser(description='CULane')
+    parser = argparse.ArgumentParser(description='CULane DeepSpeed Training')
     
     parser.add_argument('--val_batch_size', default=32, type=int, help='batch size for validation')
     parser.add_argument('--epoch', type=int, default=100, help='total number of epochs for training')
     parser.add_argument('--start_epoch', type=int, default=0, help='start epoch of training')
     parser.add_argument('--local-rank', type=int, default=0, help='local rank of the process')
-    parser.add_argument('--rank', type=int, default=0, help='rank of the process')
     parser.add_argument('--ds_config_path', type=str, default='/work/train/CULane/ds_config.json', help='deepspeed configuration json file path')
-    
-    parser.add_argument('--project_name', type=str, default=f'convnext_tiny_unet/culane', help='project name used for defining save path')
+    parser.add_argument('--project_name', type=str, default='convnext_unet/culane/deepspeed', help='project name used for defining save path')
     parser.add_argument('--weight_dir', type=str, default='/work/checkpoints', help='basic path for saving model weights and files')
     parser.add_argument('--plot_dir', type=str, default='/work/plots', help='basic path for saving plots')
     parser.add_argument('--save_step', type=int, default=10, help='steps for model saving')
     parser.add_argument('--save_plot_step', type=int, default=5, help='steps for plot saving')
     
-    parser.add_argument('--ckpt_id', type=str, help='checkpoint id for loading model. in this case, use saved epoch number')
-    
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
     
     return args
-
-# check whether the directory exists or not
-def checkdir(path):
-    if not os.path.exists(path):
-        print("creating directories: ", path)
-        os.makedirs(path)
         
 def save_plots(train_history, val_history, train_dice, val_dice, train_lane, val_lane, epoch, save_plot_path):
     checkdir(save_plot_path)
@@ -130,10 +115,10 @@ def get_ds_config(args):
 
 def main(opts):
     
-    deepspeed.init_distributed()
     print("Distributed training Initialized")
-    _local_rank = int(os.environ.get("LOCAL_RANK"))
-    get_accelerator().set_device(_local_rank)
+    deepspeed.init_distributed() # initialize deepspeed distribute environment instead of pytorch distributed training setup
+    local_rank = int(os.environ.get("LOCAL_RANK"))
+    get_accelerator().set_device(local_rank)
     
     if opts.rank == 0:
         currtime = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y_%m_%d_%H%M%S") # need to plus 9 hours to utc time (ktz=utc+9)
@@ -234,21 +219,13 @@ def main(opts):
     # 3) deepspeed optimizer
     ds_config = get_ds_config(opts)
     parameters = filter(lambda p: p.requires_grad, convnext_unet.parameters())
-    model_engine, optimizer, train_dataloader, _ = deepspeed.initialize(args=opts, model=convnext_unet, model_parameters=parameters, training_data=train_dataset, config=ds_config,)
-    
-    if opts.start_epoch != 0: # if start epoch of training is not zero
-        # load checkpoints
-        _, client_sd = model_engine.load_checkpoint(opts.save_path + '/weights', opts.ckpt_id) # ckpt_id is epoch (1-index ordered)
-        epoch = client_sd['epoch']
-        if opts.start_epoch != epoch: # opts.start_epoch should also be 1-index ordered.
-            raise Exception("saved epoch and opts.start_epoch are not matched!")
-    else:
-        client_sd = {}
-        
+    model_engine, optimizer, train_dataloader, _ = deepspeed.initialize(args=opts, model=convnext_unet, model_parameters=parameters,
+                                                                        training_data=train_dataset, config=ds_config)
     #get the local device name(str) and local rank (int)
     local_device = get_accelerator().device_name(model_engine.local_rank)
     local_rank = model_engine.local_rank
     
+    # for float32, target_dtype will be None so no datatype conversion needed.
     target_dtype = None
     if model_engine.bfloat16_enabled():
         target_dtype = torch.bfloat16
@@ -259,7 +236,7 @@ def main(opts):
     # criterion = DICELoss(weights=[], num_cls=5) for weighted Dice Loss
     # criterion = DICELoss(num_cls=4) # custom dice loss for segmentation tasks
     criterion = LaneDICELoss(num_cls=5) # background information will be treated as 0-th channel
-
+            
     train_history = []
     val_history = []
 
@@ -302,9 +279,8 @@ def main(opts):
             loss_container.append(loss.detach().item())
             
             dice_coeff = get_dice_score(pred_mask.cpu().detach().numpy(), mask.cpu().detach().numpy())
-            dice_container.append(dice_coeff)
-            
             lane_coeff = get_lane_score(pred_mask.cpu().detach().numpy(), mask.cpu().detach().numpy())
+            dice_container.append(dice_coeff)
             lane_container.append(lane_coeff)
             
             running_loss += loss.detach().item()
@@ -348,13 +324,13 @@ def main(opts):
                 loss_container.append(loss.detach().item())
                 
                 dice_coeff = get_dice_score(pred_mask.cpu().detach().numpy(), mask.cpu().detach().numpy())
-                dice_container.append(dice_coeff)
-                
                 lane_coeff = get_lane_score(pred_mask.cpu().detach().numpy(), mask.cpu().detach().numpy())
+                dice_container.append(dice_coeff)
                 lane_container.append(lane_coeff)
                 
                 running_loss += loss.detach().item()
-                running_lane += lane_coeff 
+                running_lane += lane_coeff
+                
                 if local_rank == 0 and i % val_print_threshold == 0:
                     print(f"Validation [{epoch+1}:{i:5d}/{total_val_iter}], loss: {running_loss/val_print_threshold:.3f}, lane-dice: {running_lane/print_threshold:.3f}")
                     running_loss = 0.0
@@ -373,14 +349,14 @@ def main(opts):
             print("="*50)
             checkdir(opts.save_path+'/weights')
             
-            if ((epoch+1) % opts.save_step) == 0 or (epoch+1)==opts.epoch:
-                print("+"*50)
-                print(f"Saving Model to {opts.save_path}/weights...")
-                print("+"*50)
+            # if ((epoch+1) % opts.save_step) == 0 or (epoch+1)==opts.epoch:
+            #     print("+"*50)
+            #     print(f"Saving Model to {opts.save_path}/weights...")
+            #     print("+"*50)
                 
-                client_sd['epoch'] = epoch
-                ckpt_id = epoch+1 # checkpoint id is epoch following 1-index ordering
-                model_engine.save_checkpoint(opts.save_path+'/weights', ckpt_id, client_sd=client_sd)
+            #     client_sd['epoch'] = epoch
+            #     ckpt_id = epoch+1 # checkpoint id is epoch following 1-index ordering
+            #     model_engine.save_checkpoint(opts.save_path+'/weights', ckpt_id, client_sd=client_sd)
                 
             if ((epoch+1) % opts.save_plot_step) == 0 or (epoch+1)==opts.epoch:
                 save_plots(train_history, val_history, train_dice, val_dice, train_lane, val_lane, epoch+1, opts.save_plot_path) # epochs as 1-index ordering
