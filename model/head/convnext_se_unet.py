@@ -424,6 +424,7 @@ class Decoder(torch.nn.Module):
     def forward(self, x, enc_stage_out):
         encoder_idx = len(enc_stage_out)-2 # -1 from zero indexing, -1 from skipping last stage output
         for i in range(self.num_stages):
+            
             if encoder_idx >= 0:
                 x = self.stages[i](x, enc_stage_out[encoder_idx])
             encoder_idx -= 1

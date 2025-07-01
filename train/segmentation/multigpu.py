@@ -11,8 +11,8 @@ from train.utils.logger import set_logger_for_training, checkdir
 from train.utils.distributed_training import setup_for_distributed, init_for_distributed
 from train.utils.plotting import plot_figure
 from train.utils.dataset import read_culane_segdata
-from train.utils.create_model import create_unet
-from train.utils.utils import copy_files
+from train.utils.create_model import get_model
+from train.utils.utils import copy_files, get_copy_list
 
 import numpy as np
 import argparse
@@ -54,10 +54,13 @@ def get_args_parser():
     parser.add_argument('--val_batch_size', default=32, type=int, help='batch size for validation') # batch size for validation
     
     # path for scheduler configuration file: each configuration files includes specific parameter settings of scheduler
-    parser.add_argument('--model_config', type=str, default='/work/train/segmentation/model_config/unet.yaml', help='unet configuration file')
+    parser.add_argument('--model_config', type=str, default='/work/train/segmentation/model_config/convnext_unet.yaml', help='model configuration file')
     parser.add_argument('--train_config', type=str, default='/work/train/segmentation/train_config/segmentation_culane.yaml', help='training configuration file')
+    
+    # model to use
+    parser.add_argument('--model', type=str, required=True, help='model name to use for training (e.g. default_unet, convnext_unet)')
         
-    parser.add_argument('--project_name', type=str, default=f'convnext_tiny_unet/culane', help='project name used for defining save path')
+    parser.add_argument('--project_name', type=str, default=f'convnext_unet_4x/culane', help='project name used for defining save path')
     parser.add_argument('--weight_dir', type=str, default='/work/checkpoints', help='basic path for saving model weights and files')
     parser.add_argument('--plot_dir', type=str, default='/work/plots', help='basic path for saving plots')
     parser.add_argument('--save_step', type=int, default=10, help='steps for model saving')
@@ -72,7 +75,8 @@ def get_args_parser():
     parser.add_argument('--world_size', type=int, default=8)
 
     return parser
-        
+
+
 
 def main(opts):
     init_for_distributed(opts)
@@ -84,29 +88,22 @@ def main(opts):
         
         currtime = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y_%m_%d_%H%M%S") # need to plus 9 hours to utc time (ktz=utc+9)
         opts.project_name = f'{opts.project_name}/{currtime}'
-            
         opts.save_path = opts.weight_dir + '/' + opts.project_name
         opts.save_plot_path = opts.plot_dir + '/' + opts.project_name
 
         checkdir(opts.save_path)
         checkdir(opts.save_plot_path)
         
-        copy_file_list = [('/work/model/backbone/convnext_se/convnext_se.py', f'{opts.save_path}/convnext_se.py'),
-                          ('/work/model/head/convnext_se_unet.py', f'{opts.save_path}/convnext_se_unet.py'),
-                          ('/work/train/segmentation/multigpu.py', f'{opts.save_path}/multigpu.py'),
-                          (opts.model_config, f'{opts.save_path}/model_config.yaml'),
-                          (opts.train_config, f'{opts.save_path}/train_config.yaml'),
-                          ('/work/scripts/convnext_unet_training.sh', f'{opts.save_path}/convnext_unet_training.sh')]
-            
+        copy_file_list = get_copy_list(opts, task='segmentation') 
         copy_files(copy_file_list)
         
         train_logger, val_logger, process_logger = set_logger_for_training(opts)
     else:
         process_logger = None # if rank is not 0, set process_logger as None
 
-    convnext_unet = create_unet(opts.model_config)
-    convnext_unet = convnext_unet.to(local_gpu_id)
-    convnext_unet = DDP(module=convnext_unet, device_ids=[local_gpu_id])
+    model = get_model(opts)
+    model = model.to(local_gpu_id)
+    model = DDP(module=model, device_ids=[local_gpu_id])
     
     # instead of using albumentation Normalize(), we simply divide the given image by 255.
     train_transforms = A.Compose([
@@ -156,7 +153,7 @@ def main(opts):
     #                                               sampler=test_sampler,
     #                                               pin_memory=True)
     
-    convnext_unet, criterion, optimizer, scheduler, start_epoch, end_epoch, scheduler_type = set_weights(opts, convnext_unet, train_dataloader, process_logger)
+    model, criterion, optimizer, scheduler, start_epoch, end_epoch, scheduler_type = set_weights(opts, model, train_dataloader, process_logger)
     
     # creates a GradScaler for mixed precision training
     scaler = GradScaler()
@@ -175,7 +172,7 @@ def main(opts):
     val_print_threshold = int(total_val_iter/val_num_prints)
     
     for epoch in range(start_epoch, end_epoch): # epochs follows 0-index ordering
-        convnext_unet.train()
+        model.train()
         train_sampler.set_epoch(epoch)
         recorder.initialize_scalar(['running_loss', 'running_lane']) # initialize the running loss and lane score
         recorder.initialize(['train_loss', 'train_dice', 'train_lane']) # initialize the metrics for recording (training)
@@ -191,7 +188,7 @@ def main(opts):
             with autocast(device_type='cuda', dtype=torch.float16):
                 image = image.to(local_gpu_id)
                 mask = mask.to(local_gpu_id)
-                prediction_mask = convnext_unet(image)        
+                prediction_mask = model(image)        
                 loss = criterion(prediction_mask, mask)
             
             # scale loss.  calls backward() on the scaled loss to create scaled gradients
@@ -235,7 +232,7 @@ def main(opts):
             train_logger.info('=' * 50 + f"\nTrain Epoch: {epoch+1}, Dice Score: {dice_coeff:.8f}, Lane Score: {lane_coeff:.8f}, Loss: {loss:.8f}, LR: {optimizer.param_groups[0]['lr']}\n" + '=' * 50)
         
         if opts.rank==0: # only rank 0 will run validation
-            convnext_unet.eval()
+            model.eval()
             recorder.initialize_scalar(['running_loss', 'running_lane']) # initialize the running loss and lane score
             recorder.initialize(['val_loss', 'val_dice', 'val_lane']) # initialize the metrics for recording (validating)
             
@@ -246,7 +243,7 @@ def main(opts):
                     image = image.to(opts.rank)
                     mask = mask.to(opts.rank)
                     
-                    prediction_mask = convnext_unet(image)
+                    prediction_mask = model(image)
                     loss = criterion(prediction_mask, mask)
                     
                     dice_score = get_dice_score(prediction_mask.cpu().detach().numpy(), mask.cpu().detach().numpy())
@@ -292,7 +289,7 @@ def main(opts):
                 currtime = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y_%m_%d_%H%M%S")
                 torch.save({
                     'epoch': epoch,
-                    'model_state_dict' : convnext_unet.state_dict(),
+                    'model_state_dict' : model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict' : scheduler.state_dict(),
                     'consumed_batch': (epoch+1) * len(train_dataloader) # number of total consumed iteration (number of total consumed batches during training)

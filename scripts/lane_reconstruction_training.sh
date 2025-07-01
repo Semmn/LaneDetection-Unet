@@ -1,15 +1,16 @@
 batch_size=64
 val_batch_size=64
 
-model_config='/work/train/unsupervised/pixel_reconstruction/model_config/unet.yaml'
-train_config='/work/train/unsupervised/pixel_reconstruction/train_config/lane_masked_multidata.yaml'
+model_config='/work/train/unsupervised/pixel_reconstruction/model_config/convnext_unet.yaml' # or default_unet.yaml
 
-masking_width=200
-loss_type='masked_mse' # 'mse' or 'masked_mse'
+train_config='/work/train/unsupervised/pixel_reconstruction/train_config/lane_masked.yaml'
+model='convnext_unet' # or default_unet
 
-project_name='convnext_unet_4x/multi_data/self_supervised'
-weight_dir='/work/checkpoints'
-plot_dir='/work/plots'
+project_name='convnext_unet_4x/multi_data/lane_reconst' # change this to your project name
+
+weight_dir='/work/temp1'
+plot_dir='/work/temp2'
+
 save_step=5
 save_plot_step=5
 load_weight_path='None' # default as 'None' -> Not loading any saved weight file
@@ -21,17 +22,12 @@ num_workers=16
 gpu_ids='0,1,2,3,4,5,6,7' # in case of using all gpus, gpu_ids='0,1,2,3,4,5,6,7'
 world_size=8
 
-# For BooleanOptionalAction, --multi_data_mode or --no-multi_data_mode exist
-# if you use multi_data_mode, all dataset (bdd100k, culane, llamas, tusimple) will be used for training
-
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nproc_per_node=8 /work/train/unsupervised/pixel_reconstruction/multigpu_self_supervised.py \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --nproc_per_node=8 /work/train/unsupervised/pixel_reconstruction/multigpu_lane_masked.py \
+    --model $model \
     --batch_size $batch_size \
     --val_batch_size $val_batch_size \
     --model_config $model_config \
     --train_config $train_config \
-    --masking_width $masking_width \
-    --loss_type $loss_type \
-    --multi_data_mode \
     --project_name $project_name \
     --weight_dir $weight_dir \
     --plot_dir $plot_dir \

@@ -1,6 +1,12 @@
 train:
+  dataset:
+    multi_data_mode: True # if this sets to True, all dataset (bdd100k, culane, llamas, tusimple) will be used for training (in case of False, only culane dataset will be used)
+    mask_ratio: 0.5
+    mask_window_h: 14
+    mask_window_w: 42
+    
   loss: # pytorch cross_entropy or lane_dice or dice
-    loss_type: 'mse'
+    loss_type: 'masked_mse'
     mse:
       reduction: 'mean' # one of 'none', 'mean', 'sum'
     masked_mse:
@@ -16,7 +22,7 @@ train:
       maximize: False
       foreach: None
       capturable: False
-      differentialable: False
+      differentiable: False
       fused: None
     adam:
       lr: 0.0004
@@ -26,8 +32,8 @@ train:
       amsgrad: False
       foreach: None
       maximize: False
-      capturaable: False
-      differentialable: False
+      capturable: False
+      differentiable: False
       fused: None
     rmsprop:
       lr: 0.0004
@@ -39,7 +45,7 @@ train:
       capturable: False
       foreach: None
       maximize: False
-      differentialable: False
+      differentiable: False
     sgd:
       lr: 0.0004
       momentum: 0

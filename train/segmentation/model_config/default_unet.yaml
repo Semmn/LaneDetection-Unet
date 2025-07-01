@@ -1,0 +1,21 @@
+# Default Version UNet layer configuration file
+DefaultUNet:
+  in_channels: 3
+  out_channels: 2
+
+  encoder:
+    channels: [64, 128, 256, 512] # number of channels for encoder blocks
+    kernel_sz: [3, 3, 3, 3] # kernel size for encoder blocks
+    padding: [1, 1, 1, 1] # padding for encoder blocks
+  
+  decoder:
+    channels: [512, 256, 128, 64] # number of channels
+    kernel_sz: [3, 3, 3, 3] # kernel size for decoder blocks
+    padding: [1, 1, 1, 1] # padding for decoder
+  
+  latent:
+    kernel_sz: [3, 3]
+    padding: [1, 1]
+
+    
+

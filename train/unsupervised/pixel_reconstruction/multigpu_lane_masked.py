@@ -1,7 +1,7 @@
 import sys
 sys.path.append('/work')
 
-from pixel_reconstruction.dataset import MaskedCULaneDataset, MaskedMultiDataset
+from train.unsupervised.pixel_reconstruction.dataset import LaneMaskedCULaneDataset, LaneMaskedMultiDataset
 
 from train.utils.loss import MaskedPixelReconstructLoss
 from train.utils.metrics import get_pixel_reconst, get_masked_pixel_reconst
@@ -9,9 +9,9 @@ from train.utils.weight_load import load_weight, load_weight_with_cp, set_weight
 from train.utils.logger import set_logger_for_training, checkdir
 from train.utils.distributed_training import setup_for_distributed, init_for_distributed
 from train.utils.plotting import plot_figure
-from train.utils.dataset import read_culane_segdata, read_multi_segdata
-from train.utils.create_model import create_unet
-from train.utils.utils import copy_files
+from train.utils.dataset import read_multi_segdata, read_culane_segdata
+from train.utils.create_model import get_model
+from train.utils.utils import copy_files, get_copy_list, load_yaml
 from train.utils.recorder import Recorder
 
 import numpy as np
@@ -22,7 +22,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import datetime
 import logging
-import yaml
+import yaml # for scheduler configuration file loading, dumpping
 from datetime import timedelta
 
 import torch
@@ -53,16 +53,13 @@ def get_args_parser():
     parser.add_argument('--val_batch_size', default=32, type=int, help='batch size for validation') # batch size for validation
     
     # path for scheduler configuration file: each configuration files includes specific parameter settings of scheduler
-    parser.add_argument('--model_config', type=str, default='/work/train/unsupervised/pixel_reconstruction/model_config/unet.yaml', help='unet configuration file')
-    parser.add_argument('--train_config', type=str, default='/work/train/unsupervised/pixel_reconstruction/train_config/patch_masked_multidata.yaml', help='training configuration file')
-        
-    parser.add_argument('--mask_ratio', type=float, default=0.5, help='mask ratio for masking operation')
-    parser.add_argument('--mask_window_h', type=int, default=56, help='mask window height size')
-    parser.add_argument('--mask_window_w', type=int, default=168, help='mask window width size')
-    parser.add_argument('--loss_type', type=str, default='mse', help='loss type for training. mse or masked_mse')
-    parser.add_argument('--multi_data_mode', action=argparse.BooleanOptionalAction) # flag for multi data training mode (bdd100k, LLaMAS, TuSimple, CuLane)
+    parser.add_argument('--model_config', type=str, default='/work/train/unsupervised/pixel_reconstruction/model_config/convnext_unet.yaml', help='model configuration file')
+    parser.add_argument('--train_config', type=str, default='/work/train/unsupervised/pixel_reconstruction/train_config/lane_masked.yaml', help='training configuration file')
     
-    parser.add_argument('--project_name', type=str, default=f'convnext_tiny_unet/culane', help='project name used for defining save path')
+    # model to use
+    parser.add_argument('--model', type=str, required=True, help='model name to use for training (e.g. default_unet, model)')
+    
+    parser.add_argument('--project_name', type=str, default=f'convnext_unet_4x/culane', help='project name used for defining save path')
     parser.add_argument('--weight_dir', type=str, default='/work/checkpoints', help='basic path for saving model weights and files')
     parser.add_argument('--plot_dir', type=str, default='/work/plots', help='basic path for saving plots')
     parser.add_argument('--save_step', type=int, default=10, help='steps for model saving')
@@ -74,7 +71,7 @@ def get_args_parser():
     parser.add_argument('--num_workers', type=int, default=16, help='number of workers for multi-gpu training')
     parser.add_argument('--gpu_ids', nargs='+', default=['0', '1', '2', '3', '4', '5', '6', '7'], help='gpu ids for training') 
     parser.add_argument('--world_size', type=int, default=8)
-
+    
     return parser
 
 
@@ -85,6 +82,8 @@ def main(opts):
     
     # only rank 0 will copy the file and create directory
     if opts.rank == 0:
+        print("opts: ", opts)
+
         currtime = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y_%m_%d_%H%M%S") # need to plus 9 hours to utc time (ktz=utc+9)
         opts.project_name = f'{opts.project_name}/{currtime}'
             
@@ -94,53 +93,46 @@ def main(opts):
         checkdir(opts.save_path)
         checkdir(opts.save_plot_path)
         
-        copy_file_list = [('/work/model/backbone/convnext_se/convnext_se.py', f'{opts.save_path}/convnext_se.py'),
-                          ('/work/model/head/convnext_se_unet.py', f'{opts.save_path}/convnext_se_unet.py'),
-                          ('/work/train/unsupervised/pixel_reconstruction/multigpu_unsupervised.py', f'{opts.save_path}/multigpu_unsupervised.py'),
-                          (opts.model_config, f'{opts.save_path}/model_config.yaml'),
-                          (opts.train_config, f'{opts.save_path}/train_config.yaml'),
-                          ('/work/scripts/convnext_unet_unsupervised.sh', f'{opts.save_path}/convnext_unet_unsupervised.sh')]    
-        
+        copy_file_list = get_copy_list(opts, task='lane_reconstruction')    
         copy_files(copy_file_list)
+        
         train_logger, val_logger, process_logger = set_logger_for_training(opts)
     else:
         process_logger = None # if rank is not 0, set process_logger as None
-    
         
-    convnext_unet = create_unet(opts.model_config)
-    convnext_unet = convnext_unet.to(local_gpu_id)
-    convnext_unet = DDP(module=convnext_unet, device_ids=[local_gpu_id])
+    model = get_model(opts)
+    model = model.to(local_gpu_id)
+    model = DDP(module=model, device_ids=[local_gpu_id])
     
     if not opts.multi_data_mode:
         # CULaneSegDataset is the dataset that returns (image, mask) pair for training and validation
         # mask of the returned dataset excludes background channel and only contains foreground lane information
-        train_dataset = MaskedCULaneDataset(cu_train_x, img_size=(224, 672), mask_ratio=opts.mask_ratio, mask_window_size=(opts.mask_window_h, opts.mask_window_w))
-        val_dataset = MaskedCULaneDataset(cu_val_x, img_size=(224, 672), mask_ratio=opts.mask_ratio, mask_window_size=(opts.mask_window_h, opts.mask_window_w))
+        train_dataset = LaneMaskedCULaneDataset(cu_train_x, cu_train_y, img_size=(224, 672), masking_width=opts.masking_width)
+        val_dataset = LaneMaskedCULaneDataset(cu_val_x, cu_val_y, img_size=(224, 672), masking_width=opts.masking_width)
     else:
-        # MaskedMultiDataset for multi-data training
-        # currently, mask size for all dataset are same for (opts.mask_window_w, opts.mask_window_h)
-        train_dataset = MaskedMultiDataset(unsuper_train_x, img_size=[(224, 672)]*4, target_size=[(224, 672)]*4, mask_window_size=[(opts.mask_window_h, opts.mask_window_w)]*4, mask_ratio=opts.mask_ratio)
-        val_dataset = MaskedMultiDataset(unsuper_val_x, img_size=[(224, 672)]*4, target_size=[(224, 672)]*4, mask_window_size=[(opts.mask_window_h, opts.mask_window_w)]*4, mask_ratio=opts.mask_ratio)
+        # if you use model for multi-dataset training, all img_size and target_size must be same! (the architecture are not flexible for different input sizes)
+        train_dataset = LaneMaskedMultiDataset(super_train_x, super_train_y, img_size=[(224, 672)]*4, target_size=[(224, 672)]*4, masking_width=opts.masking_width)
+        val_dataset = LaneMaskedMultiDataset(super_val_x, super_val_y, img_size=[(224, 672)]*4, target_size=[(224, 672)]*4, masking_width=opts.masking_width)
+        
     
     train_sampler = DistributedSampler(dataset=train_dataset, shuffle=True)
     val_sampler = DistributedSampler(dataset=val_dataset, shuffle=True)
-    
+        
     train_dataloader = torch.utils.data.DataLoader(dataset=train_dataset,
-                                                   batch_size=opts.batch_size,
-                                                   shuffle=False,
-                                                   num_workers=int(opts.num_workers/opts.world_size),
-                                                   sampler=train_sampler,
-                                                   pin_memory=False)
-    
+                                                batch_size=opts.batch_size,
+                                                shuffle=False,
+                                                num_workers=int(opts.num_workers/opts.world_size),
+                                                sampler=train_sampler,
+                                                pin_memory=False)
+        
     val_dataloader = torch.utils.data.DataLoader(val_dataset, 
-                                                 batch_size=opts.val_batch_size,
-                                                 shuffle=False,
-                                                 num_workers=int(opts.num_workers/opts.world_size),
-                                                 sampler=val_sampler,
-                                                 pin_memory=False)
+                                                batch_size=opts.val_batch_size,
+                                                shuffle=False,
+                                                num_workers=int(opts.num_workers/opts.world_size),
+                                                sampler=val_sampler,
+                                                pin_memory=False)
     
-    
-    convnext_unet, criterion, optimizer, scheduler, start_epoch, end_epoch, scheduler_type = set_weights(opts, convnext_unet, train_dataloader, process_logger)
+    model, criterion, optimizer, scheduler, start_epoch, end_epoch, scheduler_type = set_weights(opts, model, train_dataloader, process_logger)
     
     # creates a GradScaler for mixed precision training
     scaler = GradScaler()
@@ -154,43 +146,48 @@ def main(opts):
 
     total_train_iter = len(train_dataloader)
     total_val_iter = len(val_dataloader)
+    
+    print("total number of iterations (train): ", total_train_iter)
+    print("total number of iterations (val): ", total_val_iter)
 
     print_threshold = int(total_train_iter/train_num_prints)
     val_print_threshold = int(total_val_iter/val_num_prints)
-            
+
     if opts.loss_type=='mse':
         print_loss_str = 'mse loss'
         print_metrics_str = 'masked pixel-reconstruct'
     elif opts.loss_type=='masked_mse':
         print_loss_str = 'masked mse loss'
         print_metrics_str = 'pixel-reconstruct'
+    
 
     for epoch in range(start_epoch, end_epoch): # epochs follows 0-index ordering
-        convnext_unet.train()
+        model.train()
         train_sampler.set_epoch(epoch)
-        
+
         recorder.initialize(['train_loss', 'train_pixel_reconst']) # initialize the metrics for recording (training)
         recorder.initialize_scalar(['running_loss', 'running_pixel_reconst']) # initialize the running loss and lane score
         
         if opts.rank==0:
-          train_logger.info(f'Epoch {epoch+1} started!')
+            train_logger.info(f"Epoch: {epoch+1} Start!")
         
         for i, batch in enumerate(train_dataloader, 1): # batch, i follows 1-index ordering
-            image, mask = batch, batch.clone()
+            image, mask = batch
             optimizer.zero_grad()
-            
+
             # mixed precision training
             with autocast(device_type='cuda', dtype=torch.float16):
                 image = image.to(local_gpu_id)
-                mask = mask.to(local_gpu_id) 
+                mask = mask.to(local_gpu_id)    
                 mask_location = (image==0).all(dim=1) # (B, C, H, W) -> channel-wisely when all pixel-values are zero, the pixel is masked.
-                prediction_mask = convnext_unet(image)
+                prediction_mask = model(image)
+            
                 if opts.loss_type == 'mse':
                     loss = criterion(prediction_mask, mask) # when use torch.nn.mse_loss()
                 elif opts.loss_type =='masked_mse':
                     loss = criterion(prediction_mask, mask, mask_location) # when use PixelReconstructLoss()
             
-            # scale loss.  calls backward() on the scaled loss to create scaled gradients
+            # scale loss. calls backward() on the scaled loss to create scaled gradients
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update() # update the scaler
@@ -199,16 +196,16 @@ def main(opts):
                 pixel_reconst = get_masked_pixel_reconst(prediction_mask, mask, mask_location)
             elif opts.loss_type == 'masked_mse':
                 pixel_reconst = get_pixel_reconst(prediction_mask, mask)
-                
+            
             recorder.append('train_loss', loss.detach().item())
             recorder.append('train_pixel_reconst', pixel_reconst.detach().cpu())
                 
             recorder.add('running_loss', loss.detach().item())
             recorder.add('running_pixel_reconst', pixel_reconst.detach().cpu())
-            
+                
             if scheduler_type in ['one_cycle']: # in case of pytorch OneCycleLR scheduler, it update itself step-wise (only training process will update the scheduler)
                 scheduler.step()
-                
+            
             if i % print_threshold == 0:
                 running_loss = recorder.get_scalar('running_loss')
                 running_pixel_reconst = recorder.get_scalar('running_pixel_reconst')
@@ -217,7 +214,7 @@ def main(opts):
                 if opts.rank==0:
                     train_logger.info(print_str)
                 recorder.initialize_scalar(['running_loss', 'running_pixel_reconst'])
-
+            
         recorder.collect_statistic(['train_loss', 'train_pixel_reconst'])
         recorder.append_statistic('lr', optimizer.param_groups[0]['lr'])
         
@@ -225,38 +222,38 @@ def main(opts):
         pixel_reconst = recorder.get_statistic('train_pixel_reconst')[-1]
         
         print_str = '=' * 50 + f"\nTrain Epoch: {epoch+1}, Loss: {loss:.5f}, Pixel-Reconstruct: {pixel_reconst:.5f}, LR: {optimizer.param_groups[0]['lr']}\n" + '=' * 50
-        print(print_str)
         
+        print(print_str)
         if opts.rank == 0:
             train_logger.info(print_str)
         
         if opts.rank==0: # only rank 0 will run validation
-            convnext_unet.eval()
+            model.eval()
             recorder.initialize(['val_loss', 'val_pixel_reconst']) # initialize the metrics for recording (training)
             recorder.initialize_scalar(['running_loss', 'running_pixel_reconst']) # initialize the running loss and lane score
             
-            val_logger.info(f'epoch: {epoch+1} start!')
+            val_logger.info(f'Epoch: {epoch+1} start!')
             
             with torch.no_grad():
                 for i, batch in enumerate(val_dataloader, 1):
-                    image, mask = batch, batch.clone()
+                    image, mask = batch
                     image = image.to(opts.rank)
                     mask = mask.to(opts.rank)
                     
                     mask_location = (image==0).all(dim=1) # (B, C, H, W) -> channel-wisely when all pixel-values are zero, the pixel is masked.
                     
-                    prediction_mask = convnext_unet(image)
+                    prediction_mask = model(image)
                     
                     if opts.loss_type == 'mse':
                         loss = criterion(prediction_mask, mask) # when using torch.nn.MseLoss() as loss
                     elif opts.loss_type =='masked_mse':
                         loss = criterion(prediction_mask, mask, mask_location)
-
+                    
                     if opts.loss_type == 'mse':
                         pixel_reconst = get_masked_pixel_reconst(prediction_mask, mask, mask_location)
                     elif opts.loss_type == 'masked_mse':
                         pixel_reconst = get_pixel_reconst(prediction_mask, mask)
-                    
+                        
                     recorder.append('val_loss', loss.detach().item())    
                     recorder.add('running_loss', loss.detach().item())
                     
@@ -266,12 +263,12 @@ def main(opts):
                     if i % val_print_threshold == 0:
                         running_loss = recorder.get_scalar('running_loss')
                         running_pixel_reconst = recorder.get_scalar('running_pixel_reconst')
-                        print_str = f"Validation [{epoch+1}:{i:5d}/{total_val_iter}] {print_loss_str}: {running_loss/val_print_threshold:.5f} {print_metrics_str}: {running_pixel_reconst/val_print_threshold:.5f} "
+                        print_str = f"Validation [{epoch+1}:{i:5d}/{total_val_iter}] {print_loss_str}: {running_loss/val_print_threshold:.5f} {print_metrics_str}: {running_pixel_reconst/val_print_threshold:.5f}"
                         print(print_str)
                         
                         val_logger.info(print_str)
                         recorder.initialize_scalar(['running_loss', 'running_pixel_reconst'])
-
+        
             recorder.collect_statistic(['val_loss', 'val_pixel_reconst'])
             loss = recorder.get_statistic('val_loss')[-1]
             pixel_reconst = recorder.get_statistic('val_pixel_reconst')[-1]
@@ -279,14 +276,13 @@ def main(opts):
             print_str = '='*50 + f"\nVal Epoch: {epoch+1}, Loss: {loss:.5f}, Pixel-Reconstruction: {pixel_reconst:.5f}, LR: {optimizer.param_groups[0]['lr']}\n" + '='*50
             print(print_str)
             val_logger.info(print_str)
-            
         
-        # cosine_warmup_restart uses timm library whoose schedulers are updated by epoch-wise
+        # cosine_warmup_restart uses timm library whoose schedulers are updated to epoch-wise
         if scheduler_type in ['cosine_warmup_restart']:    
             scheduler.step(epoch)
         elif scheduler_type in ['multi_step']:
             scheduler.step()
-        
+            
         if opts.rank == 0: # only rank 0 will save the model and plots
             checkdir(opts.save_path+'/weights')
             if ((epoch+1) % opts.save_step) == 0 or (epoch+1)==end_epoch:
@@ -297,10 +293,10 @@ def main(opts):
                 currtime = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%Y_%m_%d_%H%M%S")
                 torch.save({
                     'epoch': epoch,
-                    'model_state_dict' : convnext_unet.state_dict(),
+                    'model_state_dict' : model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict' : scheduler.state_dict(),
-                    'cosumed_batch': (epoch+1) * len(train_dataloader)
+                    'consumed_batch': (epoch+1) * len(train_dataloader) # number of total consumed iteration (number of total consumed batches during training)
                 }, f'{opts.save_path}/weights/{currtime}_epoch{epoch+1}.pth') # epochs are saved as 1-index ordering (index 0 means initial state)
                 
             if ((epoch+1) % opts.save_plot_step) == 0 or (epoch+1)==end_epoch:
@@ -315,14 +311,23 @@ def main(opts):
 
 if __name__ == '__main__':
     
-    parser = argparse.ArgumentParser('Unsupervised Training', parents=[get_args_parser()])
+    
+    parser = argparse.ArgumentParser('lane-masked pixel reconstruction training', parents=[get_args_parser()])
     opts = parser.parse_args()
+    opts.pretrained_weight_path = 'None' # always be None for self-supervised training
+    
+    train_configs = load_yaml(opts.train_config)
     
     # you can directly set the world size and number of worker
     opts.world_size = len(opts.gpu_ids)
     opts.num_workers = len(opts.gpu_ids) * 4
     
-    if opts.multi_data_mode: # if multi_data_mode is used, multiple lane dataset will be used for self-supervised training
+    # set the multi_data_mode, masking_width and loss_type
+    opts.multi_data_mode = train_configs['train']['dataset']['multi_data_mode']
+    opts.loss_type = train_configs['train']['loss']['loss_type']
+    opts.masking_width = train_configs['train']['dataset']['masking_width']
+    
+    if opts.multi_data_mode: # if multi_data_mode is used, multiple lane dataset will be used for self-supervised training  
         CULANE_PATH='/work/dataset/CULane'
         TUSIMPLE_PATH='/work/dataset/Tusimple'
         LLAMAS_PATH='/work/dataset/LLAMAS'
@@ -335,19 +340,23 @@ if __name__ == '__main__':
         llamas_train_x, llamas_train_y, llamas_val_x, llamas_val_y, llamas_test_x = data_dict['LLAMAS']
         bdd_train_x, bdd_train_y, bdd_val_x, bdd_val_y, bdd_test_x = data_dict['BDD100K']
         
-        
-        # unsupervised settings
+        # self-supervised settings
         # test data cannot be used in this case because there is no label available
-        unsuper_train_x = {"culane": cu_train_x, "tusimple": tu_trainval_x,
-                   "llamas": llamas_train_x + llamas_test_x,
-                   "bdd": bdd_train_x + bdd_test_x}
-        unsuper_val_x = {"culane": cu_val_x, "tusimple": tu_test_x, 
-                        "llamas": llamas_val_x,
-                        "bdd": bdd_val_x}
-            
-    else:
+        super_train_x = {'culane': cu_train_x, 'tusimple': tu_trainval_x,
+                        'llamas': llamas_train_x, 'bdd': bdd_train_x}
+        super_train_y = {'culane': cu_train_y, 'tusimple': tu_trainval_y,
+                        'llamas': llamas_train_y, 'bdd': bdd_train_y}
+        super_val_x = {'culane': cu_val_x, 'tusimple': tu_test_x,
+                    'llamas': llamas_val_x, 'bdd': bdd_val_x}
+        super_val_y = {'culane': cu_val_y, 'tusimple': tu_test_y,
+                    'llamas': llamas_val_y, 'bdd': bdd_val_y}
+        
+    else: # CULane as default training dataset
+        # load CULane images (in case of culane, test set labels are not publicly available)
+        
         CULANE_PATH='/work/dataset/CULane'
         train, val, test, lane_info = read_culane_segdata(CULANE_PATH)
+        
         cu_train_x, cu_train_y = train
         cu_val_x, cu_val_y = val
         cu_test_x, _ = test

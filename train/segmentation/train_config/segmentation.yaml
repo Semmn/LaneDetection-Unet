@@ -1,9 +1,16 @@
 train:
   loss: # pytorch cross_entropy or lane_dice or dice
-    loss_type: 'mse'
-    mse:
-      reduction: 'mean' # one of 'none', 'mean', 'sum'
-    masked_mse:
+    loss_type: 'lane_dice'
+    lane_dice:
+      num_cls: 2 # lane in culane takes 2 classes
+    cross_entropy:
+      weights: None # rescaling weight to given each class
+      ignore_index: -100 # target value to ignore (setting this does not contribute to gradient to specific class)
+      reduction: 'mean' # one of none, mean, sum -> 'none': no reduction, 'mean': weighted mean average, 'sum': sum of the output
+      label_smoothing: 0.0 # a float value in [0.0, 1.0]. specifies the amount of smoothing
+    dice:
+      weights: None
+      num_cls: 2
   optimizer: # for optimizers see https://pytorch.org/docs/stable/optim.html
     # 'adamw', 'adam', 'rmsprop', 'sgd' is available
     optimizer_type: 'adamw' # currently supports only type change
@@ -16,7 +23,7 @@ train:
       maximize: False
       foreach: None
       capturable: False
-      differentialable: False
+      differentiable: False
       fused: None
     adam:
       lr: 0.0004
@@ -27,7 +34,7 @@ train:
       foreach: None
       maximize: False
       capturaable: False
-      differentialable: False
+      differentiable: False
       fused: None
     rmsprop:
       lr: 0.0004
@@ -51,6 +58,7 @@ train:
       differentiable: False
       fused: None
   
+  # each scheduler must contain epoch value!
   scheduler:
     scheduler_type: 'cosine_warmup_restart' # one of cosine_warmup_restart or one_cycle
     cosine_warmup_restart:

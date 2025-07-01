@@ -7,7 +7,32 @@ import regex
 def copy_files(files_list):
     for file in files_list:
         os.system(f'cp {file[0]} {file[1]}')
-        
+
+# return candidates for copy
+def get_copy_list(opts, task):
+    copy_file_list = [(opts.model_config, f'{opts.save_path}/model_config.yaml'),
+                    (opts.train_config, f'{opts.save_path}/train_config.yaml')]
+    
+    # models for training
+    if opts.model == 'convnext_unet':
+        copy_file_list += [('/work/model/backbone/convnext_se/convnext_se.py', f'{opts.save_path}/convnext_se.py'),
+                            ('/work/model/head/convnext_se_unet.py', f'{opts.save_path}/convnext_se_unet.py')]
+    elif opts.model == 'default_unet':
+        copy_file_list += [('/work/model/head/unet.py', f'{opts.save_path}/unet.py')]
+    
+    # tasks for training
+    if task=='segmentation':
+        copy_file_list += [('/work/train/segmentation/multigpu.py', f'{opts.save_path}/multigpu.py'),          
+                            ('/work/scripts/segmentation_training.sh', f'{opts.save_path}/segmentation_training.sh')]
+    elif task=='lane_reconstruction':
+        copy_file_list = [('/work/train/unsupervised/pixel_reconstruction/multigpu_lane_masked.py', f'{opts.save_path}/multigpu_lane_masked.py'),
+                            ('/work/scripts/lane_reconstruction_training.sh', f'{opts.save_path}/lane_reconstruction_training.sh')]
+    elif task=='patch_reconstruction':
+        copy_file_list = [('/work/train/unsupervised/pixel_reconstruction/multigpu_patch_masked.py', f'{opts.save_path}/multigpu_patch_masked.py'),
+                            ('/work/scripts/patch_reconstruction_training.sh', f'{opts.save_path}/patch_reconstruction_training.sh')]
+            
+    return copy_file_list
+
 # level: "debug", "info", "warning", "error", "critical"
 def log_with_r0(opts, logger, message, level):
     if opts.rank == 0:
